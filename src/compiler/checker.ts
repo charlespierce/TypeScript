@@ -3888,14 +3888,14 @@ namespace ts {
             for (const name of properties) {
                 names.set(getTextOfPropertyName(name), true);
             }
-            for (const prop of getPropertiesOfType(source)) {
+            eachPropertyOfType(source, prop => {
                 const inNamesToRemove = names.has(prop.name);
                 const isPrivate = getDeclarationModifierFlagsFromSymbol(prop) & (ModifierFlags.Private | ModifierFlags.Protected);
                 const isSetOnlyAccessor = prop.flags & SymbolFlags.SetAccessor && !(prop.flags & SymbolFlags.GetAccessor);
                 if (!inNamesToRemove && !isPrivate && !isClassMethod(prop) && !isSetOnlyAccessor) {
                     members.set(prop.name, prop);
                 }
-            }
+            });
             const stringIndexInfo = getIndexInfoOfType(source, IndexKind.String);
             const numberIndexInfo = getIndexInfoOfType(source, IndexKind.Number);
             return createAnonymousType(symbol, members, emptyArray, emptyArray, stringIndexInfo, numberIndexInfo);
@@ -5497,9 +5497,9 @@ namespace ts {
             const templateOptional = !!type.declaration.questionToken;
             if (type.declaration.typeParameter.constraint.kind === SyntaxKind.TypeOperator) {
                 // We have a { [P in keyof T]: X }
-                for (const propertySymbol of getPropertiesOfType(modifiersType)) {
+                eachPropertyOfType(modifiersType, propertySymbol => {
                     addMemberForKeyType(getLiteralTypeFromPropertyName(propertySymbol), propertySymbol);
-                }
+                });
                 if (getIndexInfoOfType(modifiersType, IndexKind.String)) {
                     addMemberForKeyType(stringType);
                 }
@@ -5650,14 +5650,14 @@ namespace ts {
             if (!type.resolvedProperties) {
                 const members = createMap<Symbol>();
                 for (const current of type.types) {
-                    for (const prop of getPropertiesOfType(current)) {
+                    eachPropertyOfType(current, prop => {
                         if (!members.has(prop.name)) {
                             const combinedProp = getPropertyOfUnionOrIntersectionType(type, prop.name);
                             if (combinedProp) {
                                 members.set(prop.name, combinedProp);
                             }
                         }
-                    }
+                    });
                     // The properties of a union type are those that are present in all constituent types, so
                     // we only need to check the properties of the first type
                     if (type.flags & TypeFlags.Union) {
@@ -5674,6 +5674,21 @@ namespace ts {
             return type.flags & TypeFlags.UnionOrIntersection ?
                 getPropertiesOfUnionOrIntersectionType(<UnionType>type) :
                 getPropertiesOfObjectType(type);
+        }
+
+        function eachPropertyOfType(type: Type, action: (symbol: Symbol) => void): void {
+            type = getApparentType(type);
+            if (type.flags & TypeFlags.UnionOrIntersection) {
+                //todo l8r
+                for (const prop of getPropertiesOfUnionOrIntersectionType(<UnionType | IntersectionType>type)) {
+                    const result = action(prop);
+                    if (result) {
+                        return result;
+                    }
+                }
+            } else {
+                return eachPropertyOfObjectType(type, action);
+            }
         }
 
         function getConstraintOfType(type: TypeVariable | UnionOrIntersectionType): Type {
@@ -5972,11 +5987,12 @@ namespace ts {
         function getImplicitIndexTypeOfType(type: Type, kind: IndexKind): Type {
             if (isObjectLiteralType(type)) {
                 const propTypes: Type[] = [];
-                for (const prop of getPropertiesOfType(type)) {
+                //maybe should be eachPropertyOfObjectType
+                eachPropertyOfType(type, prop => {
                     if (kind === IndexKind.String || isNumericLiteralName(prop.name)) {
                         propTypes.push(getTypeOfSymbol(prop));
                     }
-                }
+                });
                 if (propTypes.length) {
                     return getUnionType(propTypes, /*subtypeReduction*/ true);
                 }
@@ -7485,7 +7501,7 @@ namespace ts {
                 numberIndexInfo = unionSpreadIndexInfos(getIndexInfoOfType(left, IndexKind.Number), getIndexInfoOfType(right, IndexKind.Number));
             }
 
-            for (const rightProp of getPropertiesOfType(right)) {
+            eachPropertyOfType(right, rightProp => {
                 // we approximate own properties as non-methods plus methods that are inside the object literal
                 const isSetterWithoutGetter = rightProp.flags & SymbolFlags.SetAccessor && !(rightProp.flags & SymbolFlags.GetAccessor);
                 if (getDeclarationModifierFlagsFromSymbol(rightProp) & (ModifierFlags.Private | ModifierFlags.Protected)) {
@@ -7494,12 +7510,12 @@ namespace ts {
                 else if (!isClassMethod(rightProp) && !isSetterWithoutGetter) {
                     members.set(rightProp.name, getNonReadonlySymbol(rightProp));
                 }
-            }
-            for (const leftProp of getPropertiesOfType(left)) {
+            });
+            eachPropertyOfType(left, leftProp => {
                 if (leftProp.flags & SymbolFlags.SetAccessor && !(leftProp.flags & SymbolFlags.GetAccessor)
                     || skippedPrivateMembers.has(leftProp.name)
                     || isClassMethod(leftProp)) {
-                    continue;
+                    return; //was continue;
                 }
                 if (members.has(leftProp.name)) {
                     const rightProp = members.get(leftProp.name);
@@ -7518,7 +7534,7 @@ namespace ts {
                 else {
                     members.set(leftProp.name, getNonReadonlySymbol(leftProp));
                 }
-            }
+            });
             return createAnonymousType(undefined, members, emptyArray, emptyArray, stringIndexInfo, numberIndexInfo);
         }
 
@@ -8428,7 +8444,7 @@ namespace ts {
                 return false;
             }
             const targetEnumType = getTypeOfSymbol(target.symbol);
-            for (const property of getPropertiesOfType(getTypeOfSymbol(source.symbol))) {
+            const earlyReturn = eachPropertyOfType(getTypeOfSymbol(source.symbol), property => {
                 if (property.flags & SymbolFlags.EnumMember) {
                     const targetProperty = getPropertyOfType(targetEnumType, property.name);
                     if (!targetProperty || !(targetProperty.flags & SymbolFlags.EnumMember)) {
@@ -8437,10 +8453,11 @@ namespace ts {
                                 typeToString(target, /*enclosingDeclaration*/ undefined, TypeFormatFlags.UseFullyQualifiedType));
                         }
                         enumRelation.set(id, false);
-                        return false;
+                        return true; //returns false from outer.
                     }
                 }
-            }
+            });
+            if (earlyReturn) return false;
             enumRelation.set(id, true);
             return true;
         }
@@ -10045,9 +10062,8 @@ namespace ts {
         // property is computed by inferring from the source property type to X for the type
         // variable T[P] (i.e. we treat the type T[P] as the type variable we're inferring for).
         function inferTypeForHomomorphicMappedType(source: Type, target: MappedType): Type {
-            const properties = getPropertiesOfType(source);
             let indexInfo = getIndexInfoOfType(source, IndexKind.String);
-            if (properties.length === 0 && !indexInfo) {
+            if (!indexInfo && !objectTypeHasProperties(source)) {
                 return undefined;
             }
             const typeVariable = <TypeVariable>getIndexedAccessType((<IndexType>getConstraintTypeFromMappedType(target)).type, getTypeParameterFromMappedType(target));
@@ -10057,18 +10073,19 @@ namespace ts {
             const templateType = getTemplateTypeFromMappedType(target);
             const readonlyMask = target.declaration.readonlyToken ? false : true;
             const optionalMask = target.declaration.questionToken ? 0 : SymbolFlags.Optional;
-            const members = createSymbolTable(properties);
-            for (const prop of properties) {
+            const members = createMap<Symbol>();
+            const earlyReturn = eachPropertyOfType(source, prop => {
                 const inferredPropType = inferTargetType(getTypeOfSymbol(prop));
                 if (!inferredPropType) {
-                    return undefined;
+                    return true;
                 }
                 const inferredProp = createSymbol(SymbolFlags.Property | prop.flags & optionalMask, prop.name);
                 inferredProp.checkFlags = readonlyMask && isReadonlySymbol(prop) ? CheckFlags.Readonly : 0;
                 inferredProp.declarations = prop.declarations;
                 inferredProp.type = inferredPropType;
                 members.set(prop.name, inferredProp);
-            }
+            });
+            if (earlyReturn) return undefined;
             if (indexInfo) {
                 const inferredIndexType = inferTargetType(indexInfo.type);
                 if (!inferredIndexType) {
@@ -13175,7 +13192,7 @@ namespace ts {
             // If object literal is contextually typed by the implied type of a binding pattern, augment the result
             // type with those properties for which the binding pattern specifies a default value.
             if (contextualTypeHasPattern) {
-                for (const prop of getPropertiesOfType(contextualType)) {
+                eachPropertyOfType(contextualType, prop => {
                     if (!propertiesTable.get(prop.name)) {
                         if (!(prop.flags & SymbolFlags.Optional)) {
                             error(prop.valueDeclaration || (<TransientSymbol>prop).bindingElement,
@@ -13184,7 +13201,7 @@ namespace ts {
                         propertiesTable.set(prop.name, prop);
                         propertiesArray.push(prop);
                     }
-                }
+                });
             }
 
             if (spread !== emptyObjectType) {
@@ -14671,12 +14688,12 @@ namespace ts {
             // can be specified by users through attributes property.
             const paramType = getTypeAtPosition(signature, 0);
             const attributesType = checkExpressionWithContextualType(node.attributes, paramType, /*contextualMapper*/ undefined);
-            const argProperties = getPropertiesOfType(attributesType);
-            for (const arg of argProperties) {
+            const earlyReturn = eachPropertyOfType(attributesType, arg => {
                 if (!getPropertyOfType(paramType, arg.name) && isUnhyphenatedJsxName(arg.name)) {
-                    return false;
+                    return true;
                 }
-            }
+            });
+            if (earlyReturn) return false;
             return checkTypeRelatedTo(attributesType, paramType, relation, /*errorNode*/ undefined, headMessage);
         }
 
@@ -20560,12 +20577,11 @@ namespace ts {
             // derived class instance member variables and accessors, but not by other kinds of members.
 
             // NOTE: assignability is checked in checkClassDeclaration
-            const baseProperties = getPropertiesOfType(baseType);
-            for (const baseProperty of baseProperties) {
+            eachPropertyOfType(baseType, baseProperty => {
                 const base = getTargetSymbol(baseProperty);
 
                 if (base.flags & SymbolFlags.Prototype) {
-                    continue;
+                    return; //was continue;
                 }
 
                 const derived = getTargetSymbol(getPropertyOfObjectType(type, base.name));
@@ -20601,17 +20617,17 @@ namespace ts {
                         const derivedDeclarationFlags = getDeclarationModifierFlagsFromSymbol(derived);
                         if (baseDeclarationFlags & ModifierFlags.Private || derivedDeclarationFlags & ModifierFlags.Private) {
                             // either base or derived property is private - not override, skip it
-                            continue;
+                            return; //was continue;
                         }
 
                         if ((baseDeclarationFlags & ModifierFlags.Static) !== (derivedDeclarationFlags & ModifierFlags.Static)) {
                             // value of 'static' is not the same for properties - not override, skip it
-                            continue;
+                            return; //was continue;
                         }
 
                         if (isMethodLike(base) && isMethodLike(derived) || base.flags & SymbolFlags.PropertyOrAccessor && derived.flags & SymbolFlags.PropertyOrAccessor) {
                             // method is overridden with method or property/accessor is overridden with property/accessor - correct case
-                            continue;
+                            return; //was continue;
                         }
 
                         let errorMessage: DiagnosticMessage;
@@ -20633,7 +20649,7 @@ namespace ts {
                         error(derived.valueDeclaration.name || derived.valueDeclaration, errorMessage, typeToString(baseType), symbolToString(base), typeToString(type));
                     }
                 }
-            }
+            });
         }
 
         function isAccessor(kind: SyntaxKind): boolean {
@@ -20651,8 +20667,7 @@ namespace ts {
             let ok = true;
 
             for (const base of baseTypes) {
-                const properties = getPropertiesOfType(getTypeWithThisArgument(base, type.thisType));
-                for (const prop of properties) {
+                eachPropertyOfType(getTypeWithThisArgument(base, type.thisType), prop => {
                     const existing = seen.get(prop.name);
                     if (!existing) {
                         seen.set(prop.name, { prop: prop, containingType: base });
@@ -20670,7 +20685,7 @@ namespace ts {
                             diagnostics.add(createDiagnosticForNodeFromMessageChain(typeNode, errorInfo));
                         }
                     }
-                }
+                });
             }
 
             return ok;
@@ -22280,7 +22295,7 @@ namespace ts {
             type = getApparentType(type);
             const propsByName = createSymbolTable(getPropertiesOfType(type));
             if (getSignaturesOfType(type, SignatureKind.Call).length || getSignaturesOfType(type, SignatureKind.Construct).length) {
-                forEach(getPropertiesOfType(globalFunctionType), p => {
+                eachPropertyOfType(globalFunctionType, p => {
                     if (!propsByName.has(p.name)) {
                         propsByName.set(p.name, p);
                     }
