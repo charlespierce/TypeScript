@@ -5128,6 +5128,13 @@ namespace ts {
             }
             return result;
         }
+        function createInstantiatedSymbolTableFoo(type: ObjectType, mapper: TypeMapper, mappingThisOnly: boolean): SymbolTable {
+            const result = createMap<Symbol>();
+            eachPropertyOfObjectType(type, symbol => {
+                result.set(symbol.name, mappingThisOnly && isIndependentMember(symbol) ? symbol : instantiateSymbol(symbol, mapper));
+            });
+            return result;
+        }
 
         function addInheritedMembers(symbols: SymbolTable, baseSymbols: Symbol[]) {
             for (const s of baseSymbols) {
@@ -5424,7 +5431,7 @@ namespace ts {
         function resolveAnonymousTypeMembers(type: AnonymousType) {
             const symbol = type.symbol;
             if (type.target) {
-                const members = createInstantiatedSymbolTable(getPropertiesOfObjectType(type.target), type.mapper, /*mappingThisOnly*/ false);
+                const members = createInstantiatedSymbolTableFoo(type.target, type.mapper, /*mappingThisOnly*/ false);
                 const callSignatures = instantiateSignatures(getSignaturesOfType(type.target, SignatureKind.Call), type.mapper);
                 const constructSignatures = instantiateSignatures(getSignaturesOfType(type.target, SignatureKind.Construct), type.mapper);
                 const stringIndexInfo = instantiateIndexInfo(getIndexInfoOfType(type.target, IndexKind.String), type.mapper);
@@ -5622,8 +5629,8 @@ namespace ts {
             return eachNamedMember(resolveStructuredTypeMembers(<ObjectType>type), action);
         }
         function objectTypeHasProperties(type: Type): boolean {
-            return !!getPropertiesOfObjectType(type).length;//resolveStructuredTypeMembers(<ObjectType>type).anyProperties;
-            //return !!(type.flags & TypeFlags.Object) && resolveStructuredTypeMembers(<ObjectType>type).anyProperties;
+            //return !!getPropertiesOfObjectType(type).length;//resolveStructuredTypeMembers(<ObjectType>type).anyProperties;
+            return !!(type.flags & TypeFlags.Object) && resolveStructuredTypeMembers(<ObjectType>type).anyProperties;
         }
 
         /** If the given type is an object type and that type has a property by the given name,
@@ -9195,12 +9202,12 @@ namespace ts {
                 if (!(source.flags & TypeFlags.Object && target.flags & TypeFlags.Object)) {
                     return Ternary.False;
                 }
-                const sourceProperties = getPropertiesOfObjectType(source);
-                const targetProperties = getPropertiesOfObjectType(target);
-                if (sourceProperties.length !== targetProperties.length) {
-                    return Ternary.False;
-                }
-                /*
+                //const sourceProperties = getPropertiesOfObjectType(source);
+                //const targetProperties = getPropertiesOfObjectType(target);
+                //if (sourceProperties.length !== targetProperties.length) {
+                //    return Ternary.False;
+                //}
+
                 let numSourceProperties = 0;
                 let numTargetProperties = 0;
                 eachPropertyOfObjectType(source, () => numSourceProperties++);
@@ -9208,21 +9215,20 @@ namespace ts {
                 if (numSourceProperties !== numTargetProperties) {
                     return Ternary.False;
                 }
-                */
 
                 let result = Ternary.True;
-                for (const sourceProp of sourceProperties) {
+                const earlyReturn = eachPropertyOfObjectType(source, sourceProp => {
                     const targetProp = getPropertyOfObjectType(target, sourceProp.name);
                     if (!targetProp) {
-                        return Ternary.False;
+                        return true;
                     }
                     const related = compareProperties(sourceProp, targetProp, isRelatedTo);
                     if (!related) {
-                        return Ternary.False;
+                        return true;
                     }
                     result &= related;
-                }
-                return result;
+                });
+                return earlyReturn ? Ternary.False : result;
             }
 
             function signaturesRelatedTo(source: Type, target: Type, kind: SignatureKind, reportErrors: boolean): Ternary {
