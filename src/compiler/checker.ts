@@ -1897,12 +1897,12 @@ namespace ts {
             return result || emptyArray;
         }
 
-        function eachNamedMember(rt: ResolvedType, action: (symbol: Symbol) => void) {
-            rt.members.forEach((symbol, id) => {
+        function eachNamedMember<T>(rt: ResolvedType, action: (symbol: Symbol) => T): T {
+            return forEachEntry(rt.members, (symbol, id) => {
                 if (!isReservedMemberName(id)) {
                     //assert?
                     if (symbolIsValue(symbol)) {
-                        action(symbol);
+                        return action(symbol);
                     }
                 }
             });
@@ -2632,7 +2632,7 @@ namespace ts {
                         }
                         const propertyName = oldDeclaration.name;
                         const optionalToken = propertySymbol.flags & SymbolFlags.Optional ? createToken(SyntaxKind.QuestionToken) : undefined;
-                        if (propertySymbol.flags & (SymbolFlags.Function | SymbolFlags.Method) && !getPropertiesOfObjectType(propertyType).length) {
+                        if (propertySymbol.flags & (SymbolFlags.Function | SymbolFlags.Method) && !objectTypeHasProperties(propertyType)) {
                             const signatures = getSignaturesOfType(propertyType, SignatureKind.Call);
                             for (const signature of signatures) {
                                 const methodDeclaration = <MethodSignature>signatureToSignatureDeclarationHelper(signature, SyntaxKind.MethodSignature);
@@ -3345,7 +3345,7 @@ namespace ts {
                     buildIndexSignatureDisplay(resolved.numberIndexInfo, writer, IndexKind.Number, enclosingDeclaration, globalFlags, symbolStack);
                     eachNamedMember(resolved, p => {
                         const t = getTypeOfSymbol(p);
-                        if (p.flags & (SymbolFlags.Function | SymbolFlags.Method) && !getPropertiesOfObjectType(t).length) {
+                        if (p.flags & (SymbolFlags.Function | SymbolFlags.Method) && !objectTypeHasProperties(t)) {
                             const signatures = getSignaturesOfType(t, SignatureKind.Call);
                             for (const signature of signatures) {
                                 writePropertyWithModifiers(p);
@@ -5614,6 +5614,16 @@ namespace ts {
                 return resolveStructuredTypeMembers(<ObjectType>type).properties;
             }
             return emptyArray;
+        }
+        function eachPropertyOfObjectType<T>(type: Type, action: (symbol: Symbol) => T): T {
+            if (!(type.flags & TypeFlags.Object)) {
+                return;
+            }
+            return eachNamedMember(resolveStructuredTypeMembers(<ObjectType>type), action);
+        }
+        function objectTypeHasProperties(type: Type): boolean {
+            return !!getPropertiesOfObjectType(type).length;//resolveStructuredTypeMembers(<ObjectType>type).anyProperties;
+            //return !!(type.flags & TypeFlags.Object) && resolveStructuredTypeMembers(<ObjectType>type).anyProperties;
         }
 
         /** If the given type is an object type and that type has a property by the given name,
@@ -8731,7 +8741,7 @@ namespace ts {
                         (isTypeSubsetOf(globalObjectType, target) || (!isComparingJsxAttributes && isEmptyObjectType(target)))) {
                         return false;
                     }
-                    for (const prop of getPropertiesOfObjectType(source)) {
+                    return eachPropertyOfObjectType(source, prop => {
                         if (!isKnownProperty(target, prop.name, isComparingJsxAttributes)) {
                             if (reportErrors) {
                                 // We know *exactly* where things went wrong when comparing the types.
@@ -8751,7 +8761,7 @@ namespace ts {
                             }
                             return true;
                         }
-                    }
+                    });
                 }
                 return false;
             }
@@ -8788,20 +8798,17 @@ namespace ts {
             }
 
             function findMatchingDiscriminantType(source: Type, target: UnionOrIntersectionType) {
-                const sourceProperties = getPropertiesOfObjectType(source);
-                if (sourceProperties) {
-                    for (const sourceProperty of sourceProperties) {
-                        if (isDiscriminantProperty(target, sourceProperty.name)) {
-                            const sourceType = getTypeOfSymbol(sourceProperty);
-                            for (const type of target.types) {
-                                const targetType = getTypeOfPropertyOfType(type, sourceProperty.name);
-                                if (targetType && isRelatedTo(sourceType, targetType)) {
-                                    return type;
-                                }
+                return eachPropertyOfObjectType(source, sourceProperty => {
+                    if (isDiscriminantProperty(target, sourceProperty.name)) {
+                        const sourceType = getTypeOfSymbol(sourceProperty);
+                        for (const type of target.types) {
+                            const targetType = getTypeOfPropertyOfType(type, sourceProperty.name);
+                            if (targetType && isRelatedTo(sourceType, targetType)) {
+                                return type;
                             }
                         }
                     }
-                }
+                });
             }
 
             function typeRelatedToEachType(source: Type, target: UnionOrIntersectionType, reportErrors: boolean): Ternary {
@@ -9102,9 +9109,8 @@ namespace ts {
                     return propertiesIdenticalTo(source, target);
                 }
                 let result = Ternary.True;
-                const properties = getPropertiesOfObjectType(target);
                 const requireOptionalProperties = relation === subtypeRelation && !(getObjectFlags(source) & ObjectFlags.ObjectLiteral);
-                for (const targetProp of properties) {
+                const earlyReturn = eachPropertyOfObjectType(target, targetProp => {
                     const sourceProp = getPropertyOfType(source, targetProp.name);
 
                     if (sourceProp !== targetProp) {
@@ -9113,7 +9119,7 @@ namespace ts {
                                 if (reportErrors) {
                                     reportError(Diagnostics.Property_0_is_missing_in_type_1, symbolToString(targetProp), typeToString(source));
                                 }
-                                return Ternary.False;
+                                return true;
                             }
                         }
                         else if (!(targetProp.flags & SymbolFlags.Prototype)) {
@@ -9124,7 +9130,7 @@ namespace ts {
                                     if (reportErrors) {
                                         reportError(Diagnostics.Property_0_has_conflicting_declarations_and_is_inaccessible_in_type_1, symbolToString(sourceProp), typeToString(source));
                                     }
-                                    return Ternary.False;
+                                    return true;
                                 }
                                 if (sourceProp.valueDeclaration !== targetProp.valueDeclaration) {
                                     if (reportErrors) {
@@ -9137,7 +9143,7 @@ namespace ts {
                                                 typeToString(sourcePropFlags & ModifierFlags.Private ? target : source));
                                         }
                                     }
-                                    return Ternary.False;
+                                    return true;
                                 }
                             }
                             else if (targetPropFlags & ModifierFlags.Protected) {
@@ -9146,7 +9152,7 @@ namespace ts {
                                         reportError(Diagnostics.Property_0_is_protected_but_type_1_is_not_a_class_derived_from_2, symbolToString(targetProp),
                                             typeToString(getDeclaringClass(sourceProp) || source), typeToString(getDeclaringClass(targetProp) || target));
                                     }
-                                    return Ternary.False;
+                                    return true;
                                 }
                             }
                             else if (sourcePropFlags & ModifierFlags.Protected) {
@@ -9154,14 +9160,14 @@ namespace ts {
                                     reportError(Diagnostics.Property_0_is_protected_in_type_1_but_public_in_type_2,
                                         symbolToString(targetProp), typeToString(source), typeToString(target));
                                 }
-                                return Ternary.False;
+                                return true;
                             }
                             const related = isRelatedTo(getTypeOfSymbol(sourceProp), getTypeOfSymbol(targetProp), reportErrors);
                             if (!related) {
                                 if (reportErrors) {
                                     reportError(Diagnostics.Types_of_property_0_are_incompatible, symbolToString(targetProp));
                                 }
-                                return Ternary.False;
+                                return true;
                             }
                             result &= related;
                             // When checking for comparability, be more lenient with optional properties.
@@ -9177,12 +9183,12 @@ namespace ts {
                                     reportError(Diagnostics.Property_0_is_optional_in_type_1_but_required_in_type_2,
                                         symbolToString(targetProp), typeToString(source), typeToString(target));
                                 }
-                                return Ternary.False;
+                                return true;
                             }
                         }
                     }
-                }
-                return result;
+                });
+                return earlyReturn ? Ternary.False : result;
             }
 
             function propertiesIdenticalTo(source: Type, target: Type): Ternary {
@@ -9194,6 +9200,16 @@ namespace ts {
                 if (sourceProperties.length !== targetProperties.length) {
                     return Ternary.False;
                 }
+                /*
+                let numSourceProperties = 0;
+                let numTargetProperties = 0;
+                eachPropertyOfObjectType(source, () => numSourceProperties++);
+                eachPropertyOfObjectType(target, () => numTargetProperties++);
+                if (numSourceProperties !== numTargetProperties) {
+                    return Ternary.False;
+                }
+                */
+
                 let result = Ternary.True;
                 for (const sourceProp of sourceProperties) {
                     const targetProp = getPropertyOfObjectType(target, sourceProp.name);
@@ -9301,19 +9317,19 @@ namespace ts {
 
             function eachPropertyRelatedTo(source: Type, target: Type, kind: IndexKind, reportErrors: boolean): Ternary {
                 let result = Ternary.True;
-                for (const prop of getPropertiesOfObjectType(source)) {
+                const earlyReturn = eachPropertyOfObjectType(source, prop => {
                     if (kind === IndexKind.String || isNumericLiteralName(prop.name)) {
                         const related = isRelatedTo(getTypeOfSymbol(prop), target, reportErrors);
                         if (!related) {
                             if (reportErrors) {
                                 reportError(Diagnostics.Property_0_is_incompatible_with_index_signature, symbolToString(prop));
                             }
-                            return Ternary.False;
+                            return true;
                         }
                         result &= related;
                     }
-                }
-                return result;
+                });
+                return earlyReturn ? Ternary.False : result;
             }
 
             function indexInfoRelatedTo(sourceInfo: IndexInfo, targetInfo: IndexInfo, reportErrors: boolean) {
@@ -9791,11 +9807,11 @@ namespace ts {
 
         function transformTypeOfMembers(type: Type, f: (propertyType: Type) => Type) {
             const members = createMap<Symbol>();
-            for (const property of getPropertiesOfObjectType(type)) {
+            eachPropertyOfObjectType(type, property => {
                 const original = getTypeOfSymbol(property);
                 const updated = f(original);
                 members.set(property.name, updated === original ? property : createSymbolWithType(property, updated));
-            }
+            });
             return members;
         }
 
@@ -9835,11 +9851,11 @@ namespace ts {
 
         function getWidenedTypeOfObjectLiteral(type: Type): Type {
             const members = createMap<Symbol>();
-            for (const prop of getPropertiesOfObjectType(type)) {
+            eachPropertyOfObjectType(type, prop => {
                 // Since get accessors already widen their return value there is no need to
                 // widen accessor based properties here.
                 members.set(prop.name, prop.flags & SymbolFlags.Property ? getWidenedProperty(prop) : prop);
-            }
+            });
             const stringIndexInfo = getIndexInfoOfType(type, IndexKind.String);
             const numberIndexInfo = getIndexInfoOfType(type, IndexKind.Number);
             return createAnonymousType(type.symbol, members, emptyArray, emptyArray,
@@ -9897,7 +9913,7 @@ namespace ts {
                 }
             }
             if (getObjectFlags(type) & ObjectFlags.ObjectLiteral) {
-                for (const p of getPropertiesOfObjectType(type)) {
+                eachPropertyOfObjectType(type, p => {
                     const t = getTypeOfSymbol(p);
                     if (t.flags & TypeFlags.ContainsWideningType) {
                         if (!reportWideningErrorsInType(t)) {
@@ -9905,7 +9921,7 @@ namespace ts {
                         }
                         errorReported = true;
                     }
-                }
+                });
             }
             return errorReported;
         }
@@ -10271,13 +10287,12 @@ namespace ts {
             }
 
             function inferFromProperties(source: Type, target: Type) {
-                const properties = getPropertiesOfObjectType(target);
-                for (const targetProp of properties) {
+                eachPropertyOfObjectType(target, targetProp => {
                     const sourceProp = getPropertyOfObjectType(source, targetProp.name);
                     if (sourceProp) {
                         inferFromTypes(getTypeOfSymbol(sourceProp), getTypeOfSymbol(targetProp));
                     }
-                }
+                });
             }
 
             function inferFromSignatures(source: Type, target: Type, kind: SignatureKind) {
@@ -20188,7 +20203,7 @@ namespace ts {
             const numberIndexType = getIndexTypeOfType(type, IndexKind.Number);
 
             if (stringIndexType || numberIndexType) {
-                forEach(getPropertiesOfObjectType(type), prop => {
+                eachPropertyOfObjectType(type, prop => {
                     const propType = getTypeOfSymbol(prop);
                     checkIndexConstraintForProperty(prop, propType, type, declaredStringIndexer, stringIndexType, IndexKind.String);
                     checkIndexConstraintForProperty(prop, propType, type, declaredNumberIndexer, numberIndexType, IndexKind.Number);
