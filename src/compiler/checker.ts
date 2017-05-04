@@ -1883,6 +1883,7 @@ namespace ts {
                 name.charCodeAt(2) !== CharacterCodes.at;
         }
 
+        //kill!!!
         function getNamedMembers(members: SymbolTable): Symbol[] {
             let result: Symbol[];
             members.forEach((symbol, id) => {
@@ -1896,9 +1897,22 @@ namespace ts {
             return result || emptyArray;
         }
 
+        function eachNamedMember(rt: ResolvedType, action: (symbol: Symbol) => void) {
+            rt.members.forEach((symbol, id) => {
+                if (!isReservedMemberName(id)) {
+                    //assert?
+                    if (symbolIsValue(symbol)) {
+                        action(symbol);
+                    }
+                }
+            });
+        }
+
         function setStructuredTypeMembers(type: StructuredType, members: SymbolTable, callSignatures: Signature[], constructSignatures: Signature[], stringIndexInfo: IndexInfo, numberIndexInfo: IndexInfo): ResolvedType {
             (<ResolvedType>type).members = members;
             (<ResolvedType>type).properties = getNamedMembers(members);
+            (<ResolvedType>type).anyProperties = false;
+            eachNamedMember(<ResolvedType>type, () => (<ResolvedType>type).anyProperties = true);
             (<ResolvedType>type).callSignatures = callSignatures;
             (<ResolvedType>type).constructSignatures = constructSignatures;
             if (stringIndexInfo) (<ResolvedType>type).stringIndexInfo = stringIndexInfo;
@@ -2506,7 +2520,7 @@ namespace ts {
                     }
 
                     const resolved = resolveStructuredTypeMembers(type);
-                    if (!resolved.properties.length && !resolved.stringIndexInfo && !resolved.numberIndexInfo) {
+                    if (!resolved.anyProperties && !resolved.stringIndexInfo && !resolved.numberIndexInfo) {
                         if (!resolved.callSignatures.length && !resolved.constructSignatures.length) {
                             return createTypeLiteralNode(/*members*/ undefined);
                         }
@@ -2610,12 +2624,7 @@ namespace ts {
                         typeElements.push(indexInfoToIndexSignatureDeclarationHelper(resolvedType.numberIndexInfo, IndexKind.Number));
                     }
 
-                    const properties = resolvedType.properties;
-                    if (!properties) {
-                        return typeElements;
-                    }
-
-                    for (const propertySymbol of properties) {
+                    eachNamedMember(resolvedType, propertySymbol => {
                         const propertyType = getTypeOfSymbol(propertySymbol);
                         const oldDeclaration = propertySymbol.declarations && propertySymbol.declarations[0] as TypeElement;
                         if (!oldDeclaration) {
@@ -2642,7 +2651,8 @@ namespace ts {
                                 propertyTypeNode,
                                /*initializer*/ undefined));
                         }
-                    }
+                    });
+
                     return typeElements.length ? typeElements : undefined;
                 }
             }
@@ -3277,7 +3287,7 @@ namespace ts {
                     }
 
                     const resolved = resolveStructuredTypeMembers(type);
-                    if (!resolved.properties.length && !resolved.stringIndexInfo && !resolved.numberIndexInfo) {
+                    if (!resolved.anyProperties && !resolved.stringIndexInfo && !resolved.numberIndexInfo) {
                         if (!resolved.callSignatures.length && !resolved.constructSignatures.length) {
                             writePunctuation(writer, SyntaxKind.OpenBraceToken);
                             writePunctuation(writer, SyntaxKind.CloseBraceToken);
@@ -3333,7 +3343,7 @@ namespace ts {
                     }
                     buildIndexSignatureDisplay(resolved.stringIndexInfo, writer, IndexKind.String, enclosingDeclaration, globalFlags, symbolStack);
                     buildIndexSignatureDisplay(resolved.numberIndexInfo, writer, IndexKind.Number, enclosingDeclaration, globalFlags, symbolStack);
-                    for (const p of resolved.properties) {
+                    eachNamedMember(resolved, p => {
                         const t = getTypeOfSymbol(p);
                         if (p.flags & (SymbolFlags.Function | SymbolFlags.Method) && !getPropertiesOfObjectType(t).length) {
                             const signatures = getSignaturesOfType(t, SignatureKind.Call);
@@ -3352,7 +3362,7 @@ namespace ts {
                             writePunctuation(writer, SyntaxKind.SemicolonToken);
                             writer.writeLine();
                         }
-                    }
+                    });
                 }
 
                 function writeMappedType(type: MappedType) {
@@ -5598,6 +5608,7 @@ namespace ts {
         }
 
         /** Return properties of an object type or an empty array for other types */
+        //kill!
         function getPropertiesOfObjectType(type: Type): Symbol[] {
             if (type.flags & TypeFlags.Object) {
                 return resolveStructuredTypeMembers(<ObjectType>type).properties;
@@ -6371,6 +6382,7 @@ namespace ts {
                 const type = <ResolvedType>createObjectType(ObjectFlags.Anonymous);
                 type.members = emptySymbols;
                 type.properties = emptyArray;
+                type.anyProperties = false;
                 type.callSignatures = !isConstructor ? [signature] : emptyArray;
                 type.constructSignatures = isConstructor ? [signature] : emptyArray;
                 signature.isolatedSignatureType = type;
@@ -8107,6 +8119,7 @@ namespace ts {
                     const result = <ResolvedType>createObjectType(ObjectFlags.Anonymous, type.symbol);
                     result.members = resolved.members;
                     result.properties = resolved.properties;
+                    result.anyProperties = resolved.anyProperties;
                     result.callSignatures = emptyArray;
                     result.constructSignatures = emptyArray;
                     return result;
@@ -8368,7 +8381,7 @@ namespace ts {
         }
 
         function isEmptyResolvedType(t: ResolvedType) {
-            return t.properties.length === 0 &&
+            return t.members.size === 0 &&
                 t.callSignatures.length === 0 &&
                 t.constructSignatures.length === 0 &&
                 !t.stringIndexInfo &&
@@ -13899,7 +13912,7 @@ namespace ts {
 
             // If the targetAttributesType is an emptyObjectType, indicating that there is no property named 'props' on this instance type.
             // but there exists a sourceAttributesType, we need to explicitly give an error as normal assignability check allow excess properties and will pass.
-            if (targetAttributesType === emptyObjectType && (isTypeAny(sourceAttributesType) || (<ResolvedType>sourceAttributesType).properties.length > 0)) {
+            if (targetAttributesType === emptyObjectType && (isTypeAny(sourceAttributesType) || (<ResolvedType>sourceAttributesType).anyProperties)) {
                 error(openingLikeElement, Diagnostics.JSX_element_class_does_not_support_attributes_because_it_does_not_have_a_0_property, getJsxElementPropertiesName());
             }
             else {
@@ -14490,7 +14503,7 @@ namespace ts {
             if (type.flags & TypeFlags.Object) {
                 const resolved = resolveStructuredTypeMembers(<ObjectType>type);
                 if (resolved.callSignatures.length === 1 && resolved.constructSignatures.length === 0 &&
-                    resolved.properties.length === 0 && !resolved.stringIndexInfo && !resolved.numberIndexInfo) {
+                    !resolved.anyProperties && !resolved.stringIndexInfo && !resolved.numberIndexInfo) {
                     return resolved.callSignatures[0];
                 }
             }

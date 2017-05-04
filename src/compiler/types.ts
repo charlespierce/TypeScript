@@ -3170,7 +3170,9 @@ namespace ts {
     // Resolved object, union, or intersection type
     export interface ResolvedType extends ObjectType, UnionOrIntersectionType {
         members: SymbolTable;              // Properties by name
+        //kill
         properties: Symbol[];              // Properties
+        anyProperties: boolean;
         callSignatures: Signature[];       // Call signatures of type
         constructSignatures: Signature[];  // Construct signatures of type
         stringIndexInfo?: IndexInfo;       // String indexing info
