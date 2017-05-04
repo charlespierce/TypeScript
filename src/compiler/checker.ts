@@ -1886,15 +1886,22 @@ namespace ts {
         //kill!!!
         function getNamedMembers(members: SymbolTable): Symbol[] {
             let result: Symbol[];
+            eachNamedMemberOfMembers(members, symbol => {
+                if (!result) result = [];
+                result.push(symbol);
+            });
+            return result || emptyArray;
+        }
+
+        function eachNamedMemberOfMembers(members: SymbolTable, action: (symbol: Symbol) => void): void {
             members.forEach((symbol, id) => {
                 if (!isReservedMemberName(id)) {
-                    if (!result) result = [];
+                    //assert?
                     if (symbolIsValue(symbol)) {
-                        result.push(symbol);
+                        action(symbol);
                     }
                 }
             });
-            return result || emptyArray;
         }
 
         function eachNamedMember<T>(rt: ResolvedType, action: (symbol: Symbol) => T): T {
@@ -1910,7 +1917,6 @@ namespace ts {
 
         function setStructuredTypeMembers(type: StructuredType, members: SymbolTable, callSignatures: Signature[], constructSignatures: Signature[], stringIndexInfo: IndexInfo, numberIndexInfo: IndexInfo): ResolvedType {
             (<ResolvedType>type).members = members;
-            (<ResolvedType>type).properties = getNamedMembers(members);
             (<ResolvedType>type).anyProperties = false;
             eachNamedMember(<ResolvedType>type, () => (<ResolvedType>type).anyProperties = true);
             (<ResolvedType>type).callSignatures = callSignatures;
@@ -5464,7 +5470,11 @@ namespace ts {
                     }
                     const baseConstructorType = getBaseConstructorTypeOfClass(classType);
                     if (baseConstructorType.flags & (TypeFlags.Object | TypeFlags.Intersection | TypeFlags.TypeVariable)) {
-                        members = createSymbolTable(getNamedMembers(members));
+                        const outerMembers = members; //TODO:NAME
+                        members = createMap<Symbol>();
+                        eachNamedMemberOfMembers(outerMembers, symbol => {
+                            members.set(symbol.name, symbol);
+                        });
                         addInheritedMembers(members, baseConstructorType);
                     }
                     else if (baseConstructorType === anyType) {
@@ -5616,14 +5626,6 @@ namespace ts {
             return <ResolvedType>type;
         }
 
-        /** Return properties of an object type or an empty array for other types */
-        //kill!
-        function getPropertiesOfObjectType(type: Type): Symbol[] {
-            if (type.flags & TypeFlags.Object) {
-                return resolveStructuredTypeMembers(<ObjectType>type).properties;
-            }
-            return emptyArray;
-        }
         function eachPropertyOfObjectType<T>(type: Type, action: (symbol: Symbol) => T): T {
             if (!(type.flags & TypeFlags.Object)) {
                 return;
@@ -5671,11 +5673,14 @@ namespace ts {
             return type.resolvedProperties;
         }
 
+        //Do not use -- super slow!!!
         function getPropertiesOfType(type: Type): Symbol[] {
             type = getApparentType(type);
             return type.flags & TypeFlags.UnionOrIntersection ?
                 getPropertiesOfUnionOrIntersectionType(<UnionType>type) :
-                getPropertiesOfObjectType(type);
+                type.flags & TypeFlags.Object ?
+                    getNamedMembers(resolveStructuredTypeMembers(<ObjectType>type).members) :
+                    emptyArray;
         }
 
         function eachPropertyOfType(type: Type, action: (symbol: Symbol) => void): void {
@@ -6424,7 +6429,6 @@ namespace ts {
                 const isConstructor = signature.declaration.kind === SyntaxKind.Constructor || signature.declaration.kind === SyntaxKind.ConstructSignature;
                 const type = <ResolvedType>createObjectType(ObjectFlags.Anonymous);
                 type.members = emptySymbols;
-                type.properties = emptyArray;
                 type.anyProperties = false;
                 type.callSignatures = !isConstructor ? [signature] : emptyArray;
                 type.constructSignatures = isConstructor ? [signature] : emptyArray;
@@ -8161,7 +8165,6 @@ namespace ts {
                 if (resolved.constructSignatures.length) {
                     const result = <ResolvedType>createObjectType(ObjectFlags.Anonymous, type.symbol);
                     result.members = resolved.members;
-                    result.properties = resolved.properties;
                     result.anyProperties = resolved.anyProperties;
                     result.callSignatures = emptyArray;
                     result.constructSignatures = emptyArray;
