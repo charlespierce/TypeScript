@@ -1703,7 +1703,7 @@ namespace ts {
             const exports = getExportsOfModuleAsArray(moduleSymbol);
             const exportEquals = resolveExternalModuleSymbol(moduleSymbol);
             if (exportEquals !== moduleSymbol) {
-                addRange(exports, getPropertiesOfType(getTypeOfSymbol(exportEquals)));
+                eachPropertyOfType(getTypeOfSymbol(exportEquals), prop => exports.push(prop));
             }
             return exports;
         }
@@ -5136,12 +5136,12 @@ namespace ts {
             return result;
         }
 
-        function addInheritedMembers(symbols: SymbolTable, baseSymbols: Symbol[]) {
-            for (const s of baseSymbols) {
+        function addInheritedMembers(symbols: SymbolTable, baseType: Type) {
+            eachPropertyOfType(baseType, s => {
                 if (!symbols.has(s.name)) {
                     symbols.set(s.name, s);
                 }
-            }
+            });
         }
 
         function resolveDeclaredMembers(type: InterfaceType): InterfaceTypeWithDeclaredMembers {
@@ -5201,7 +5201,7 @@ namespace ts {
                 const thisArgument = lastOrUndefined(typeArguments);
                 for (const baseType of baseTypes) {
                     const instantiatedBaseType = thisArgument ? getTypeWithThisArgument(instantiateType(baseType, mapper), thisArgument) : baseType;
-                    addInheritedMembers(members, getPropertiesOfType(instantiatedBaseType));
+                    addInheritedMembers(members, instantiatedBaseType);
                     callSignatures = concatenate(callSignatures, getSignaturesOfType(instantiatedBaseType, SignatureKind.Call));
                     constructSignatures = concatenate(constructSignatures, getSignaturesOfType(instantiatedBaseType, SignatureKind.Construct));
                     if (!stringIndexInfo) {
@@ -5357,6 +5357,7 @@ namespace ts {
         function resolveUnionTypeMembers(type: UnionType) {
             // The members and properties collections are empty for union types. To get all properties of a union
             // type use getPropertiesOfType (only the language service uses this).
+            //TODO: update above comment
             const callSignatures = getUnionSignatures(type.types, SignatureKind.Call);
             const constructSignatures = getUnionSignatures(type.types, SignatureKind.Construct);
             const stringIndexInfo = getUnionIndexInfo(type.types, IndexKind.String);
@@ -5394,6 +5395,7 @@ namespace ts {
         function resolveIntersectionTypeMembers(type: IntersectionType) {
             // The members and properties collections are empty for intersection types. To get all properties of an
             // intersection type use getPropertiesOfType (only the language service uses this).
+            //TODO: update above comment
             let callSignatures: Signature[] = emptyArray;
             let constructSignatures: Signature[] = emptyArray;
             let stringIndexInfo: IndexInfo;
@@ -5463,7 +5465,7 @@ namespace ts {
                     const baseConstructorType = getBaseConstructorTypeOfClass(classType);
                     if (baseConstructorType.flags & (TypeFlags.Object | TypeFlags.Intersection | TypeFlags.TypeVariable)) {
                         members = createSymbolTable(getNamedMembers(members));
-                        addInheritedMembers(members, getPropertiesOfType(baseConstructorType));
+                        addInheritedMembers(members, baseConstructorType);
                     }
                     else if (baseConstructorType === anyType) {
                         stringIndexInfo = createIndexInfo(anyType, /*isReadonly*/ false);
@@ -5689,6 +5691,14 @@ namespace ts {
             } else {
                 return eachPropertyOfObjectType(type, action);
             }
+        }
+
+        function mapPropertiesOfType<T>(type: Type, fn: (prop: Symbol) => T): T[] {
+            const res: T[] = [];
+            eachPropertyOfType(type, prop => {
+                res.push(fn(prop));
+            });
+            return res;
         }
 
         function getConstraintOfType(type: TypeVariable | UnionOrIntersectionType): Type {
@@ -7262,7 +7272,7 @@ namespace ts {
         }
 
         function getLiteralTypeFromPropertyNames(type: Type) {
-            return getUnionType(map(getPropertiesOfType(type), getLiteralTypeFromPropertyName));
+            return getUnionType(mapPropertiesOfType(type, getLiteralTypeFromPropertyName));
         }
 
         function getIndexType(type: Type): Type {
@@ -10299,7 +10309,7 @@ namespace ts {
                         // We're inferring from some source type S to a mapped type { [P in T]: X }, where T is a type
                         // parameter. Infer from 'keyof S' to T and infer from a union of each property type in S to X.
                         inferFromTypes(getIndexType(source), constraintType);
-                        inferFromTypes(getUnionType(map(getPropertiesOfType(source), getTypeOfSymbol)), getTemplateTypeFromMappedType(<MappedType>target));
+                        inferFromTypes(getUnionType(mapPropertiesOfType(source, getTypeOfSymbol)), getTemplateTypeFromMappedType(<MappedType>target));
                         return;
                     }
                 }
@@ -13345,7 +13355,7 @@ namespace ts {
                         attributesArray = [];
                         attributesTable = createMap<Symbol>();
                     }
-                    attributesArray = getPropertiesOfType(spread);
+                    attributesArray = getPropertiesOfType(spread); //todo l8r
                 }
 
                 attributesTable = createMap<Symbol>();
@@ -13518,7 +13528,7 @@ namespace ts {
             // JSX.ElementAttributesProperty | JSX.ElementChildrenAttribute [type]
             const jsxElementAttribPropInterfaceType = jsxElementAttribPropInterfaceSym && getDeclaredTypeOfSymbol(jsxElementAttribPropInterfaceSym);
             // The properties of JSX.ElementAttributesProperty | JSX.ElementChildrenAttribute
-            const propertiesOfJsxElementAttribPropInterface = jsxElementAttribPropInterfaceType && getPropertiesOfType(jsxElementAttribPropInterfaceType);
+            const propertiesOfJsxElementAttribPropInterface = jsxElementAttribPropInterfaceType && getPropertiesOfType(jsxElementAttribPropInterfaceType); //todo l8r
             if (propertiesOfJsxElementAttribPropInterface) {
                 // Element Attributes has zero properties, so the element attributes type will be the class instance type
                 if (propertiesOfJsxElementAttribPropInterface.length === 0) {
@@ -13884,7 +13894,7 @@ namespace ts {
          */
         function getJsxIntrinsicTagNames(): Symbol[] {
             const intrinsics = getJsxType(JsxNames.IntrinsicElements);
-            return intrinsics ? getPropertiesOfType(intrinsics) : emptyArray;
+            return intrinsics ? getPropertiesOfType(intrinsics) : emptyArray; //todo l8r
         }
 
         function checkJsxPreconditions(errorNode: Node) {
@@ -22293,6 +22303,7 @@ namespace ts {
         // if the type has call or construct signatures
         function getAugmentedPropertiesOfType(type: Type): Symbol[] {
             type = getApparentType(type);
+            //OK since this is only called from services
             const propsByName = createSymbolTable(getPropertiesOfType(type));
             if (getSignaturesOfType(type, SignatureKind.Call).length || getSignaturesOfType(type, SignatureKind.Construct).length) {
                 eachPropertyOfType(globalFunctionType, p => {
