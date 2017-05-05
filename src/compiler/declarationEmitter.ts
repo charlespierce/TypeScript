@@ -191,6 +191,7 @@ namespace ts {
             writer.trackSymbol = trackSymbol;
             writer.reportInaccessibleThisError = reportInaccessibleThisError;
             writer.reportIllegalExtends = reportIllegalExtends;
+            writer.reportInaccessibleSymbolError = handleSymbolAccessibilityError;
             writer.writeKeyword = writer.write;
             writer.writeOperator = writer.write;
             writer.writePunctuation = writer.write;
@@ -1297,14 +1298,9 @@ namespace ts {
             function emitDynamicName(entityName: EntityNameExpression) {
                 writer.getSymbolAccessibilityDiagnostic = getVariableDeclarationTypeVisibilityError;
                 const visibilityResult = resolver.isEntityNameVisible(entityName, enclosingDeclaration);
-                if (visibilityResult.accessibility !== SymbolAccessibility.Accessible) {
-                    resolver.writeTypeOfExpression(entityName, enclosingDeclaration, TypeFormatFlags.None, writer);
-                }
-                else {
-                    handleSymbolAccessibilityError(visibilityResult);
-                    recordTypeReferenceDirectivesIfNecessary(resolver.getTypeReferenceDirectivesForEntityName(entityName));
-                    writeTextOfNode(currentText, node.name);
-                }
+                handleSymbolAccessibilityError(visibilityResult);
+                recordTypeReferenceDirectivesIfNecessary(resolver.getTypeReferenceDirectivesForEntityName(entityName));
+                writeTextOfNode(currentText, node.name);
             }
 
             function emitBindingPattern(bindingPattern: BindingPattern) {
